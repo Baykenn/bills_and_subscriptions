@@ -1,0 +1,36 @@
+{
+  "name": "subscription-stack",
+  "version": "1.0.0",
+  "description": "Track all your subscriptions and see your monthly/yearly spend at a glance",
+  "type": "module",
+  "main": "dist/addon.js",
+  "author": "Baykenn",
+  "license": "MIT",
+  "scripts": {
+    "build": "vite build",
+    "ship": "vite build && node scripts/deploy.mjs",
+    "dev:deploy": "concurrently \"npm run dev\" \"npm run watch:deploy\"",
+    "watch:deploy": "node scripts/watch-deploy.mjs",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@wealthfolio/addon-sdk": "^3.3.0",
+    "lucide-react": "^1.8.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/node": "^20.19.33",
+    "@types/react": "^19.2.13",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "chokidar": "^4.0.3",
+    "concurrently": "^9.1.2",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "peerDependencies": {
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  }
+}
