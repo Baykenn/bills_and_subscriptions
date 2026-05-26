@@ -1,11 +1,17 @@
 {
-  "id": "subscription-stack",
-  "name": "Subscription Stack",
+  "id": "bills-and-subscriptions",
+  "name": "Bills & Subscriptions",
   "version": "1.0.0",
-  "description": "Track all your subscriptions and see your monthly/yearly spend at a glance",
+  "description": "Track all your bills and subscriptions and see your monthly/yearly spend at a glance",
   "author": "Baykenn",
   "main": "dist/addon.js",
   "sdkVersion": "3.3.0",
+  "license": "MIT",
+  "homepage": "https://github.com/Baykenn/bills-and-subscriptions",
+  "repository": "https://github.com/Baykenn/bills-and-subscriptions",
+  "keywords": ["bills", "subscriptions", "budget", "spending", "tracker"],
+  "minWealthfolioVersion": null,
+  "icon": null,
   "enabled": true,
   "permissions": [
     {
@@ -14,13 +20,7 @@
         { "name": "sidebar.addItem", "isDeclared": true, "isDetected": false, "detectedAt": null },
         { "name": "router.add", "isDeclared": true, "isDetected": false, "detectedAt": null }
       ],
-      "purpose": "Add Subscription Stack to the sidebar navigation"
+      "purpose": "Add Bills & Subscriptions to the sidebar navigation"
     }
-  ],
-  "homepage": null,
-  "repository": null,
-  "license": null,
-  "minWealthfolioVersion": null,
-  "keywords": null,
-  "icon": null
+  ]
 }
