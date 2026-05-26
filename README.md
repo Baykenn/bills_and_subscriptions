@@ -1,6 +1,6 @@
 # Bills & Subscriptions
 
-A [Wealthfolio](https://wealthfolio.app) addon that tracks your recurring subscriptions and one-off bills so you can see exactly where your money goes each month.
+A [Wealthfolio](https://wealthfolio.app) addon that tracks your recurring subscriptions and bills so you can see exactly where your money goes each month.
 
 ## Features
 
