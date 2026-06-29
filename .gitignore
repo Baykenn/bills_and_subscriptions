@@ -33,3 +33,8 @@ Thumbs.db
 
 # Claude Code local settings (machine-specific hooks)
 .claude/settings.local.json
+
+# Developer-only files — kept locally, not for public repo
+CLAUDE.md
+ROADMAP.md
+docs/
