@@ -28,8 +28,8 @@ Thumbs.db
 # TypeScript
 *.tsbuildinfo
 
-# Dashboard inbox (transient — picked up and deleted by dashboard)
-.dashboard/inbox/
+# Dashboard (local tooling only)
+.dashboard/
 
 # Claude Code local settings (machine-specific hooks)
 .claude/settings.local.json
