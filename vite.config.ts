@@ -1,16 +1,22 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import { resolve } from "path";
+
+// Packages the Wealthfolio 3.6+ sandbox provides at runtime — must not be bundled.
+const HOST_EXTERNALS = [
+  "react",
+  "react-dom",
+  "react-dom/client",
+  "react/jsx-runtime",
+  "react/jsx-dev-runtime",
+  "lucide-react",
+  "@wealthfolio/addon-sdk",
+];
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  resolve: {
-    alias: [
-      { find: /^react$/, replacement: resolve(__dirname, "src/react-host-shim.ts") },
-      { find: /^react\/jsx-dev-runtime$/, replacement: resolve(__dirname, "src/react-jsx-shim.ts") },
-      { find: /^react\/jsx-runtime$/, replacement: resolve(__dirname, "src/react-jsx-shim.ts") },
-    ],
+  esbuild: {
+    jsxDev: false,
   },
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
@@ -22,6 +28,7 @@ export default defineConfig({
       formats: ["es"],
     },
     rollupOptions: {
+      external: HOST_EXTERNALS,
       output: {
         inlineDynamicImports: true,
       },

@@ -1,5 +1,12 @@
-// localStorage-based persistence for subscriptions.
-// Keys are prefixed with "ss:" to avoid collisions with other addons.
+// Persistence for subscriptions, backed by ctx.api.secrets (the host-brokered
+// per-addon store) rather than localStorage. Wealthfolio 3.6 runs addons in a
+// sandboxed iframe with an opaque origin, where the browser's localStorage is
+// not durable — writes silently fail to survive a reload. Reads/writes here
+// go through an in-memory cache hydrated once from secrets at startup (see
+// hydrateStorage()), so the rest of the app can keep using a synchronous API.
+// Keys are prefixed with "ss." to avoid collisions with other addons
+// (the secrets API rejects ":" in key names).
+import { getContext } from "../context";
 
 export type BillingCycle = "monthly" | "yearly" | "quarterly" | "weekly";
 
@@ -101,25 +108,291 @@ export interface Bill {
   billingCycle?: BillingCycle; // only meaningful when recurring === true
 }
 
-const BILLS_KEY = "ss:bills";
+// ─── Secrets-backed cache ─────────────────────────────────────────────────────
+// ctx.api.secrets is backed by the OS keyring, which hard-caps each value at
+// 2560 chars — a single JSON blob per collection breaks the moment the list
+// grows past a handful of items (confirmed in production: a 9-item
+// subscriptions array failed to persist while a 2-item bills array worked).
+// So each subscription/bill/sync-log entry is stored as its own small secret,
+// plus a small index secret listing the current IDs for that collection.
+
+const SETTINGS_KEY = "ss.settings";
+
+let hydrated = false;
+
+/**
+ * True once hydrateStorage() has loaded the secrets store into the cache.
+ * Writes before this point would read a still-empty cache and overwrite
+ * whatever's on disk with an incomplete snapshot — callers must gate
+ * mutations (e.g. disable "Add") on this until it's true.
+ */
+export function isHydrated(): boolean {
+  return hydrated;
+}
+
+function sanitizeKeySegment(raw: string): string {
+  // secrets keys may only contain ASCII letters, digits, '.', '_' and '-'
+  return raw.replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+function itemKey(prefix: string, id: string): string {
+  return `ss.${prefix}.${sanitizeKeySegment(id)}`;
+}
+
+function indexKey(prefix: string): string {
+  return `ss.${prefix}.index`;
+}
+
+// Writes are queued so two never overlap — mostly hygiene, since the actual
+// bug that first looked like write corruption turned out to be two separate,
+// simpler issues (see persistItem and lib/image.ts). A write is verified with
+// a single read-back; mismatches are logged but not retried, since a retry
+// won't help a value that's genuinely too large for the keyring to store.
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+function enqueueWrite<T>(op: () => Promise<T>): Promise<T> {
+  const result = writeQueue.then(op, op);
+  writeQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+function secretsGet(key: string): Promise<string | null> {
+  return getContext().api.secrets.get(key);
+}
+
+function secretsSet(key: string, value: string): Promise<void> {
+  return enqueueWrite(async () => {
+    const secrets = getContext().api.secrets;
+    await secrets.set(key, value);
+    const readBack = await secrets.get(key);
+    if (readBack !== value) {
+      getContext().api.logger.error(`secrets.set verification mismatch for "${key}"`);
+    }
+  });
+}
+
+function secretsDelete(key: string): Promise<void> {
+  return enqueueWrite(() => getContext().api.secrets.delete(key));
+}
+
+async function loadCollection<T>(prefix: string): Promise<{ items: T[]; ids: string[] }> {
+  try {
+    const indexRaw = await secretsGet(indexKey(prefix));
+    const ids: string[] = indexRaw ? JSON.parse(indexRaw) : [];
+    const items: (T | null)[] = await Promise.all(
+      ids.map(async (id): Promise<T | null> => {
+        try {
+          const raw = await secretsGet(itemKey(prefix, id));
+          return raw ? (JSON.parse(raw) as T) : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return { items: items.filter((item): item is T => item !== null), ids };
+  } catch (err: unknown) {
+    getContext().api.logger.error(`Failed to load collection "${prefix}": ${String(err)}`);
+    return { items: [], ids: [] };
+  }
+}
+
+/**
+ * Persists one item's JSON and updates the collection's index if it's new.
+ * Queued, not awaited by callers — but the index is only updated once the
+ * item's own write actually succeeds, so a rejected write (e.g. too large
+ * for the keyring's size cap) can't leave a phantom id in the index with no
+ * retrievable value behind it.
+ */
+function persistItem(prefix: string, id: string, json: string, ids: string[]): string[] {
+  const alreadyKnown = ids.includes(id);
+  const nextIds = alreadyKnown ? ids : [id, ...ids];
+  secretsSet(itemKey(prefix, id), json).then(
+    () => {
+      if (!alreadyKnown) {
+        secretsSet(indexKey(prefix), JSON.stringify(nextIds)).catch(() => {});
+      }
+    },
+    (err: unknown) => {
+      getContext().api.logger.error(`Failed to persist ${prefix}/${id}: ${String(err)}`);
+      if (prefix.startsWith("logo")) {
+        getContext().api.toast.error("Couldn't save that logo — it may still be too large. Try a smaller image.");
+      }
+    },
+  );
+  return nextIds;
+}
+
+/** Deletes one item's secret and updates the collection's index. Queued, not awaited by callers. */
+function removeItem(prefix: string, id: string, ids: string[]): string[] {
+  secretsDelete(itemKey(prefix, id)).catch(() => {});
+  const nextIds = ids.filter((existing) => existing !== id);
+  secretsSet(indexKey(prefix), JSON.stringify(nextIds)).catch(() => {});
+  return nextIds;
+}
+
+let subsCache: Subscription[] = [];
+let subsIds: string[] = [];
+let billsCache: Bill[] = [];
+let billsIds: string[] = [];
+let syncLogCache: Record<string, string> = {};
+let syncLogIds: string[] = [];
+let settingsCache: string | null = null;
+let subLogoCache: Record<string, string> = {};
+let subLogoIds: string[] = [];
+let billLogoCache: Record<string, string> = {};
+let billLogoIds: string[] = [];
+
+async function loadLogoCollection(prefix: string): Promise<{ cache: Record<string, string>; ids: string[] }> {
+  const indexRaw = await secretsGet(indexKey(prefix)).catch(() => null);
+  const ids: string[] = indexRaw ? JSON.parse(indexRaw) : [];
+  const values = await Promise.all(ids.map((id) => loadChunkedValue(prefix, id)));
+  const cache = Object.fromEntries(
+    ids.map((id, i) => [id, values[i]]).filter((entry): entry is [string, string] => entry[1] !== null),
+  );
+  return { cache, ids: Object.keys(cache) };
+}
+
+/** Load subscriptions, bills, settings, the sync log, and logos from the host secrets store. */
+export async function hydrateStorage(): Promise<void> {
+  const [subs, bills, syncLog, settingsRaw, subLogos, billLogos] = await Promise.all([
+    loadCollection<Subscription>("sub"),
+    loadCollection<Bill>("bill"),
+    loadCollection<string>("synclog"),
+    secretsGet(SETTINGS_KEY).catch(() => null),
+    loadLogoCollection("logo-sub"),
+    loadLogoCollection("logo-bill"),
+  ]);
+  subsCache = subs.items;
+  subsIds = subs.ids;
+  billsCache = bills.items;
+  billsIds = bills.ids;
+  syncLogCache = Object.fromEntries(syncLog.ids.map((id, i) => [id, syncLog.items[i]]).filter(([, v]) => v !== undefined));
+  syncLogIds = syncLog.ids;
+  settingsCache = settingsRaw;
+  subLogoCache = subLogos.cache;
+  subLogoIds = subLogos.ids;
+  billLogoCache = billLogos.cache;
+  billLogoIds = billLogos.ids;
+  hydrated = true;
+  window.dispatchEvent(new CustomEvent("ss:storage-hydrated"));
+}
+
+// ─── Logos ────────────────────────────────────────────────────────────────────
+// User-picked images, resized client-side (see lib/image.ts). A single secret
+// caps out at ~1280 usable chars (2560 bytes, halved for UTF-16 encoding) —
+// nowhere near enough for a recognizable logo — so each logo is split across
+// multiple small secrets ("chunks") and reassembled on read. A tiny manifest
+// key records the chunk count.
+const LOGO_CHUNK_SIZE = 1000;
+
+function chunkKey(prefix: string, id: string, index: number): string {
+  return `${itemKey(prefix, id)}.c${index}`;
+}
+
+async function saveChunkedValue(prefix: string, id: string, value: string): Promise<boolean> {
+  const chunkCount = Math.ceil(value.length / LOGO_CHUNK_SIZE) || 1;
+  try {
+    for (let i = 0; i < chunkCount; i++) {
+      await secretsSet(chunkKey(prefix, id, i), value.slice(i * LOGO_CHUNK_SIZE, (i + 1) * LOGO_CHUNK_SIZE));
+    }
+    await secretsSet(itemKey(prefix, id), JSON.stringify({ chunks: chunkCount }));
+    return true;
+  } catch (err: unknown) {
+    getContext().api.logger.error(`Failed to persist chunked ${prefix}/${id}: ${String(err)}`);
+    return false;
+  }
+}
+
+async function loadChunkedValue(prefix: string, id: string): Promise<string | null> {
+  try {
+    const metaRaw = await secretsGet(itemKey(prefix, id));
+    if (!metaRaw) return null;
+    const meta = JSON.parse(metaRaw) as { chunks: number };
+    const chunks = await Promise.all(
+      Array.from({ length: meta.chunks }, (_, i) => secretsGet(chunkKey(prefix, id, i))),
+    );
+    if (chunks.some((c) => c === null)) return null;
+    return chunks.join("");
+  } catch {
+    return null;
+  }
+}
+
+async function deleteChunkedValue(prefix: string, id: string): Promise<void> {
+  const metaRaw = await secretsGet(itemKey(prefix, id)).catch(() => null);
+  const chunkCount = metaRaw ? (JSON.parse(metaRaw) as { chunks: number }).chunks : 0;
+  await Promise.all(
+    Array.from({ length: chunkCount }, (_, i) => secretsDelete(chunkKey(prefix, id, i)).catch(() => {})),
+  );
+  await secretsDelete(itemKey(prefix, id)).catch(() => {});
+}
+
+export type LogoKind = "sub" | "bill";
+
+export function getLogo(kind: LogoKind, id: string): string | null {
+  return (kind === "sub" ? subLogoCache : billLogoCache)[id] ?? null;
+}
+
+/** Returns true if the logo was saved successfully. */
+export async function saveLogo(kind: LogoKind, id: string, dataUri: string): Promise<boolean> {
+  const prefix = kind === "sub" ? "logo-sub" : "logo-bill";
+  const ok = await saveChunkedValue(prefix, id, dataUri);
+  if (!ok) {
+    getContext().api.toast.error("Couldn't save that logo — try a smaller or simpler image.");
+    return false;
+  }
+  if (kind === "sub") {
+    subLogoCache = { ...subLogoCache, [id]: dataUri };
+    if (!subLogoIds.includes(id)) {
+      subLogoIds = [id, ...subLogoIds];
+      secretsSet(indexKey(prefix), JSON.stringify(subLogoIds)).catch(() => {});
+    }
+  } else {
+    billLogoCache = { ...billLogoCache, [id]: dataUri };
+    if (!billLogoIds.includes(id)) {
+      billLogoIds = [id, ...billLogoIds];
+      secretsSet(indexKey(prefix), JSON.stringify(billLogoIds)).catch(() => {});
+    }
+  }
+  return true;
+}
+
+export function deleteLogo(kind: LogoKind, id: string): void {
+  const prefix = kind === "sub" ? "logo-sub" : "logo-bill";
+  deleteChunkedValue(prefix, id).catch(() => {});
+  if (kind === "sub") {
+    const { [id]: _removed, ...rest } = subLogoCache;
+    subLogoCache = rest;
+    subLogoIds = subLogoIds.filter((existing) => existing !== id);
+    secretsSet(indexKey(prefix), JSON.stringify(subLogoIds)).catch(() => {});
+  } else {
+    const { [id]: _removed, ...rest } = billLogoCache;
+    billLogoCache = rest;
+    billLogoIds = billLogoIds.filter((existing) => existing !== id);
+    secretsSet(indexKey(prefix), JSON.stringify(billLogoIds)).catch(() => {});
+  }
+}
+
+// ─── Bills ────────────────────────────────────────────────────────────────────
 
 export function getBills(): Bill[] {
-  return load<Bill>(BILLS_KEY);
+  return billsCache;
 }
 
 export function saveBill(bill: Bill): void {
-  const all = load<Bill>(BILLS_KEY);
-  const idx = all.findIndex((b) => b.id === bill.id);
-  if (idx >= 0) {
-    all[idx] = bill;
-  } else {
-    all.unshift(bill);
-  }
-  save(BILLS_KEY, all);
+  const idx = billsCache.findIndex((b) => b.id === bill.id);
+  billsCache = idx >= 0
+    ? billsCache.map((b, i) => (i === idx ? bill : b))
+    : [bill, ...billsCache];
+  billsIds = persistItem("bill", bill.id, JSON.stringify(bill), billsIds);
 }
 
 export function deleteBill(id: string): void {
-  save(BILLS_KEY, load<Bill>(BILLS_KEY).filter((b) => b.id !== id));
+  billsCache = billsCache.filter((b) => b.id !== id);
+  billsIds = removeItem("bill", id, billsIds);
 }
 
 // ─── Addon settings ───────────────────────────────────────────────────────────
@@ -129,48 +402,42 @@ export interface AddonSettings {
   syncAccountId: string | null; // null = sync disabled
 }
 
-const SETTINGS_KEY = "ss:settings";
-const DEFAULT_SETTINGS: AddonSettings = { billsEnabled: true, syncAccountId: null };
+export const DEFAULT_SETTINGS: AddonSettings = { billsEnabled: true, syncAccountId: null };
 
 export function getSettings(): AddonSettings {
   try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { ...DEFAULT_SETTINGS };
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    if (!settingsCache) return { ...DEFAULT_SETTINGS };
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(settingsCache) };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
 }
 
 export function saveSettings(settings: AddonSettings): void {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  settingsCache = JSON.stringify(settings);
+  secretsSet(SETTINGS_KEY, settingsCache).catch((err: unknown) => {
+    getContext().api.logger.error(`Failed to persist settings: ${String(err)}`);
+  });
   window.dispatchEvent(new CustomEvent("ss:settings-changed"));
 }
 
 // ─── Sync log ─────────────────────────────────────────────────────────────────
 // Maps "${subId}:${date}" → activityId so we never push the same charge twice.
-
-const SYNC_LOG_KEY = "ss:sync-log";
+// Each entry is its own secret since the log grows indefinitely over time.
 
 export function getSyncLog(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(SYNC_LOG_KEY);
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as Record<string, string>)
-      : {};
-  } catch {
-    return {};
-  }
+  return syncLogCache;
 }
 
 export function updateSyncLog(entries: Record<string, string>): void {
-  localStorage.setItem(SYNC_LOG_KEY, JSON.stringify({ ...getSyncLog(), ...entries }));
+  syncLogCache = { ...syncLogCache, ...entries };
+  for (const [key, activityId] of Object.entries(entries)) {
+    syncLogIds = persistItem("synclog", key, JSON.stringify(activityId), syncLogIds);
+  }
 }
 
 export function getSyncLogCount(): number {
-  return Object.keys(getSyncLog()).length;
+  return Object.keys(syncLogCache).length;
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -226,40 +493,21 @@ export function formatCurrency(amount: number, currency: string): string {
   }).format(amount);
 }
 
-const SUBS_KEY = "ss:subscriptions";
-
-function load<T>(key: string): T[] {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as T[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function save<T>(key: string, items: T[]): void {
-  localStorage.setItem(key, JSON.stringify(items));
-}
-
 export function getSubscriptions(): Subscription[] {
-  return load<Subscription>(SUBS_KEY);
+  return subsCache;
 }
 
 export function saveSubscription(sub: Subscription): void {
-  const all = load<Subscription>(SUBS_KEY);
-  const idx = all.findIndex((s) => s.id === sub.id);
-  if (idx >= 0) {
-    all[idx] = sub;
-  } else {
-    all.unshift(sub);
-  }
-  save(SUBS_KEY, all);
+  const idx = subsCache.findIndex((s) => s.id === sub.id);
+  subsCache = idx >= 0
+    ? subsCache.map((s, i) => (i === idx ? sub : s))
+    : [sub, ...subsCache];
+  subsIds = persistItem("sub", sub.id, JSON.stringify(sub), subsIds);
 }
 
 export function deleteSubscription(id: string): void {
-  save(SUBS_KEY, load<Subscription>(SUBS_KEY).filter((s) => s.id !== id));
+  subsCache = subsCache.filter((s) => s.id !== id);
+  subsIds = removeItem("sub", id, subsIds);
 }
 
 export function generateId(): string {

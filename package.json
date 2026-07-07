@@ -1,6 +1,6 @@
 {
   "name": "bills-and-subscriptions",
-  "version": "1.0.0",
+  "version": "3.6.1",
   "description": "Track all your bills and subscriptions and see your monthly/yearly spend at a glance",
   "type": "module",
   "main": "dist/addon.js",
@@ -15,8 +15,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@wealthfolio/addon-sdk": "^3.3.0",
-    "lucide-react": "^1.8.0"
+    "@wealthfolio/addon-sdk": "^3.6.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",
@@ -26,11 +25,13 @@
     "@vitejs/plugin-react": "^5.1.4",
     "chokidar": "^4.0.3",
     "concurrently": "^9.1.2",
+    "lucide-react": "^0.561.0",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
   },
   "peerDependencies": {
+    "lucide-react": "^0.561.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   }

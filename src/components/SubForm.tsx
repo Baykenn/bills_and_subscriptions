@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Trash2 } from "lucide-react";
+import { useState, useRef } from "react";
+import { Trash2, Upload } from "lucide-react";
 import {
   type BillingCycle,
   type SubscriptionCategory,
@@ -7,6 +7,8 @@ import {
   CATEGORIES,
   CURRENCIES,
 } from "../lib/storage";
+import { prepareLogoUpload } from "../lib/image";
+import { getContext } from "../context";
 
 export interface SubFormState {
   name: string;
@@ -18,6 +20,7 @@ export interface SubFormState {
   website: string;
   notes: string;
   active: boolean;
+  logo?: string;
 }
 
 export function blankSubForm(currency: Currency = "USD"): SubFormState {
@@ -31,6 +34,7 @@ export function blankSubForm(currency: Currency = "USD"): SubFormState {
     website: "",
     notes: "",
     active: true,
+    logo: undefined,
   };
 }
 
@@ -44,6 +48,7 @@ interface SubFormProps {
 
 export function SubForm({ initial, editingId, onSave, onDelete, onClose }: SubFormProps) {
   const [form, setForm] = useState<SubFormState>(initial);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const set = (field: keyof SubFormState, value: unknown) =>
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -51,6 +56,18 @@ export function SubForm({ initial, editingId, onSave, onDelete, onClose }: SubFo
   const handleSave = () => {
     if (!form.name.trim() || !form.amount) return;
     onSave(form);
+  };
+
+  const handleLogoPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const dataUri = await prepareLogoUpload(file);
+    if (!dataUri) {
+      getContext().api.toast.error("Couldn't use that image — try a smaller or simpler one.");
+      return;
+    }
+    set("logo", dataUri);
   };
 
   return (
@@ -63,6 +80,43 @@ export function SubForm({ initial, editingId, onSave, onDelete, onClose }: SubFo
         <h2 className="text-sm font-semibold text-foreground">
           {editingId ? "Edit subscription" : "Add subscription"}
         </h2>
+
+        {/* Logo */}
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0 bg-muted flex items-center justify-center">
+            {form.logo ? (
+              <img src={form.logo} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <Upload className="h-4 w-4 text-muted-foreground" />
+            )}
+          </div>
+          <div className="flex flex-col gap-1">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="absolute w-px h-px p-0 -m-px overflow-hidden opacity-0"
+              style={{ clip: "rect(0,0,0,0)" }}
+              onChange={handleLogoPick}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="text-xs font-medium text-foreground hover:underline w-fit"
+            >
+              {form.logo ? "Change logo" : "Upload logo"}
+            </button>
+            {form.logo && (
+              <button
+                type="button"
+                onClick={() => set("logo", undefined)}
+                className="text-xs text-muted-foreground hover:text-red-400 w-fit"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        </div>
 
         {/* Name */}
         <div className="flex flex-col gap-1.5">
@@ -151,7 +205,7 @@ export function SubForm({ initial, editingId, onSave, onDelete, onClose }: SubFo
         {/* Website */}
         <div className="flex flex-col gap-1.5">
           <label className="text-xs text-muted-foreground">
-            Website <span className="text-muted-foreground/50">(optional — used to load logo)</span>
+            Website <span className="text-muted-foreground/50">(optional)</span>
           </label>
           <input
             type="text"

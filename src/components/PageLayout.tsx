@@ -52,6 +52,15 @@ export function PageLayout({ children, activePath }: PageLayoutProps) {
       .catch(() => setAccounts([]));
   }, [showSettings]);
 
+  useEffect(() => {
+    const onHydrated = () => {
+      setSettings(getSettings());
+      setSyncTotal(getSyncLogCount());
+    };
+    window.addEventListener("ss:storage-hydrated", onHydrated);
+    return () => window.removeEventListener("ss:storage-hydrated", onHydrated);
+  }, []);
+
   const measureTab = useCallback((path: string) => {
     const container = navRef.current;
     if (!container) return null;

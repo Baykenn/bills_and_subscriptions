@@ -18,6 +18,8 @@ import {
   toYearly,
   formatCurrency,
   extractDomain,
+  isHydrated,
+  saveLogo,
 } from "../lib/storage";
 import { useBaseCurrency } from "../lib/useBaseCurrency";
 import { SubForm, blankSubForm, type SubFormState } from "../components/SubForm";
@@ -54,6 +56,7 @@ export function SummaryPage() {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [bills, setBills] = useState<Bill[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [ready, setReady] = useState(isHydrated);
 
   useEffect(() => {
     const onSettingsChanged = () => {
@@ -71,9 +74,22 @@ export function SummaryPage() {
     if (billsEnabled) setBills(getBills());
   }, [billsEnabled]);
 
-  const handleAddSub = (form: SubFormState) => {
+  useEffect(() => {
+    const onHydrated = () => {
+      setReady(true);
+      setSettings(getSettings());
+      setSubscriptions(getSubscriptions());
+      setBills(getBills());
+    };
+    window.addEventListener("ss:storage-hydrated", onHydrated);
+    return () => window.removeEventListener("ss:storage-hydrated", onHydrated);
+  }, []);
+
+  const handleAddSub = async (form: SubFormState) => {
+    if (!ready) return;
+    const id = generateId();
     saveSubscription({
-      id: generateId(),
+      id,
       name: form.name.trim(),
       amount: parseFloat(form.amount) || 0,
       currency: form.currency,
@@ -83,8 +99,9 @@ export function SummaryPage() {
       notes: form.notes || undefined,
       active: true,
     });
-    setSubscriptions(getSubscriptions());
     setShowAddForm(false);
+    if (form.logo) await saveLogo("sub", id, form.logo);
+    setSubscriptions(getSubscriptions());
   };
 
   // ── Subscriptions ─────────────────────────────────────────────────────────
@@ -199,7 +216,7 @@ export function SummaryPage() {
 
         {/* ── TOP ROW: total spend ─────────────────────────────────────────── */}
         {(hasSubscriptions || hasBills) && (
-          <div className="border rounded-xl p-5 w-1/2" style={{ backgroundColor: "color-mix(in srgb, var(--chart-1) 8%, transparent)", borderColor: "color-mix(in srgb, var(--chart-1) 25%, transparent)" }}>
+          <div className="border rounded-xl p-5 w-[calc(50%-0.5rem)]" style={{ backgroundColor: "color-mix(in srgb, var(--chart-1) 8%, transparent)", borderColor: "color-mix(in srgb, var(--chart-1) 25%, transparent)" }}>
             <div className={`grid divide-x divide-border items-stretch ${hasBills ? "grid-cols-3" : "grid-cols-2"}`}>
 
               {/* 1/3: Monthly total */}
@@ -334,8 +351,9 @@ export function SummaryPage() {
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Stack</h3>
                   <button
-                    onClick={() => setShowAddForm(true)}
-                    className="w-5 h-5 rounded-full flex items-center justify-center bg-muted hover:bg-muted-foreground/20 transition-colors"
+                    onClick={() => ready && setShowAddForm(true)}
+                    disabled={!ready}
+                    className="w-5 h-5 rounded-full flex items-center justify-center bg-muted hover:bg-muted-foreground/20 transition-colors disabled:opacity-40"
                   >
                     <Plus className="w-3 h-3 text-muted-foreground" />
                   </button>
@@ -347,7 +365,7 @@ export function SummaryPage() {
                   sortedSubs.map((sub, idx) => (
                     <div key={sub.id} className="flex items-center gap-3">
                       <span className="text-xs text-muted-foreground/50 w-4 text-right shrink-0 tabular-nums">{idx + 1}</span>
-                      <LogoAvatar name={sub.name} website={sub.website} colors={CATEGORY_COLORS[sub.category]} size="sm" />
+                      <LogoAvatar id={sub.id} kind="sub" name={sub.name} colors={CATEGORY_COLORS[sub.category]} size="sm" />
                       <span className="text-sm text-foreground flex-1 truncate">{sub.name}</span>
                       <span className="text-sm font-semibold text-foreground tabular-nums shrink-0">
                         {formatCurrency(toMonthly(sub.amount, sub.billingCycle), sub.currency)}
@@ -525,7 +543,7 @@ export function SummaryPage() {
                             {/* Bill logos */}
                             <div className="flex items-center gap-1">
                               {categoryBills.map((b) => (
-                                <LogoAvatar key={b.id} name={b.name} website={b.website} colors={colors} size="sm" />
+                                <LogoAvatar key={b.id} id={b.id} kind="bill" name={b.name} colors={colors} size="sm" />
                               ))}
                               {overflow > 0 && (
                                 <span className="text-xs text-muted-foreground/60 ml-1">+{overflow}</span>

@@ -1,33 +1,22 @@
-import { useState } from "react";
-import { extractDomain } from "../lib/storage";
+import { getLogo, type LogoKind } from "../lib/storage";
 
 interface LogoAvatarProps {
+  id: string;
+  kind: LogoKind;
   name: string;
-  website?: string;
   colors: { bg: string; color: string };
   size?: "sm" | "md";
 }
 
-export function LogoAvatar({ name, website, colors, size = "md" }: LogoAvatarProps) {
-  const [imgError, setImgError] = useState(false);
-
+export function LogoAvatar({ id, kind, name, colors, size = "md" }: LogoAvatarProps) {
   const dim       = size === "sm" ? "w-7 h-7" : "w-9 h-9";
   const textSize  = size === "sm" ? "text-xs"  : "text-sm";
+  const logo = getLogo(kind, id);
 
-  const domain     = website ? extractDomain(website) : null;
-  const faviconUrl = domain
-    ? `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${encodeURIComponent(`https://${domain}`)}&size=128`
-    : null;
-
-  if (faviconUrl && !imgError) {
+  if (logo) {
     return (
-      <div className={`${dim} rounded-lg overflow-hidden shrink-0 bg-white`}>
-        <img
-          src={faviconUrl}
-          alt=""
-          className="w-full h-full object-cover"
-          onError={() => setImgError(true)}
-        />
+      <div className={`${dim} rounded-lg overflow-hidden shrink-0`}>
+        <img src={logo} alt="" className="w-full h-full object-cover" />
       </div>
     );
   }

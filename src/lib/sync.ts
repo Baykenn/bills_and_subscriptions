@@ -37,10 +37,28 @@ function getBillDates(bill: Bill, today: string): string[] {
   return dates;
 }
 
+/** date|amount|currency|comment — good enough to catch prior syncs the log itself doesn't know about
+ * (e.g. entries recovered from a backup with different key formatting, or synced before a bug fix). */
+function activitySignature(date: string, amount: number, currency: string, comment: string): string {
+  return `${date}|${amount.toFixed(2)}|${currency}|${comment}`;
+}
+
 export async function syncAll(accountId: string): Promise<SyncResult> {
   const ctx = getContext();
   const log = getSyncLog();
   const today = new Date().toISOString().slice(0, 10);
+
+  const existing = await ctx.api.activities.getAll(accountId);
+  const existingSignatures = new Set(
+    existing
+      .filter((a) => a.activityType === "WITHDRAWAL" && a.amount !== null)
+      .map((a) => activitySignature(
+        new Date(a.date).toISOString().slice(0, 10),
+        Number(a.amount),
+        a.currency,
+        a.comment ?? "",
+      )),
+  );
 
   let synced = 0, failed = 0, skipped = 0;
   const newEntries: Record<string, string> = {};
@@ -48,8 +66,12 @@ export async function syncAll(accountId: string): Promise<SyncResult> {
   const subs = getSubscriptions().filter((s) => s.active && s.startDate);
   for (const sub of subs) {
     for (const date of getSubscriptionDates(sub, today)) {
-      const key = `${sub.id}:${date}`;
-      if (key in log || key in newEntries) { skipped++; continue; }
+      const key = `${accountId}:${sub.id}:${date}`;
+      const comment = `${sub.name} · ${sub.category}`;
+      if (key in log || key in newEntries || existingSignatures.has(activitySignature(date, sub.amount, sub.currency, comment))) {
+        skipped++;
+        continue;
+      }
       try {
         const activity = await ctx.api.activities.create({
           accountId,
@@ -57,7 +79,7 @@ export async function syncAll(accountId: string): Promise<SyncResult> {
           activityDate: date,
           amount: sub.amount,
           currency: sub.currency,
-          comment: `${sub.name} · ${sub.category}`,
+          comment,
         });
         newEntries[key] = activity.id;
         synced++;
@@ -70,8 +92,12 @@ export async function syncAll(accountId: string): Promise<SyncResult> {
   const bills = getBills();
   for (const bill of bills) {
     for (const date of getBillDates(bill, today)) {
-      const key = `bill:${bill.id}:${date}`;
-      if (key in log || key in newEntries) { skipped++; continue; }
+      const key = `${accountId}:bill:${bill.id}:${date}`;
+      const comment = `${bill.name} · ${bill.category}`;
+      if (key in log || key in newEntries || existingSignatures.has(activitySignature(date, bill.amount, bill.currency, comment))) {
+        skipped++;
+        continue;
+      }
       try {
         const activity = await ctx.api.activities.create({
           accountId,
@@ -79,7 +105,7 @@ export async function syncAll(accountId: string): Promise<SyncResult> {
           activityDate: date,
           amount: bill.amount,
           currency: bill.currency,
-          comment: `${bill.name} · ${bill.category}`,
+          comment,
         });
         newEntries[key] = activity.id;
         synced++;

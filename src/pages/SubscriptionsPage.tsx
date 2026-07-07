@@ -14,6 +14,10 @@ import {
   generateId,
   toMonthly,
   formatCurrency,
+  isHydrated,
+  getLogo,
+  saveLogo,
+  deleteLogo,
 } from "../lib/storage";
 
 const CURRENT_PATH = "/addons/bills-and-subscriptions";
@@ -27,6 +31,7 @@ export function SubscriptionsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formInitial, setFormInitial] = useState<FormState>(() => ({ ...blankSubForm(baseCurrency), currency: baseCurrency }));
   const [listOpen, setListOpen] = useState(true);
+  const [ready, setReady] = useState(isHydrated);
 
   const refresh = useCallback(() => {
     setSubscriptions(getSubscriptions());
@@ -34,7 +39,14 @@ export function SubscriptionsPage() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  useEffect(() => {
+    const onHydrated = () => { setReady(true); refresh(); };
+    window.addEventListener("ss:storage-hydrated", onHydrated);
+    return () => window.removeEventListener("ss:storage-hydrated", onHydrated);
+  }, [refresh]);
+
   const openAdd = () => {
+    if (!ready) return;
     setEditingId(null);
     setFormInitial({ ...blankSubForm(baseCurrency), currency: baseCurrency });
     setShowForm(true);
@@ -52,11 +64,13 @@ export function SubscriptionsPage() {
       website: sub.website ?? "",
       notes: sub.notes ?? "",
       active: sub.active,
+      logo: getLogo("sub", sub.id) ?? undefined,
     });
     setShowForm(true);
   };
 
-  const handleSave = (form: FormState) => {
+  const handleSave = async (form: FormState) => {
+    if (!ready) return;
     const sub: Subscription = {
       id: editingId ?? generateId(),
       name: form.name.trim(),
@@ -70,12 +84,18 @@ export function SubscriptionsPage() {
       active: form.active,
     };
     saveSubscription(sub);
-    refresh();
     setShowForm(false);
+    if (form.logo) {
+      await saveLogo("sub", sub.id, form.logo);
+    } else {
+      deleteLogo("sub", sub.id);
+    }
+    refresh();
   };
 
   const handleDelete = (id: string) => {
     deleteSubscription(id);
+    deleteLogo("sub", id);
     refresh();
     setShowForm(false);
   };
@@ -112,7 +132,8 @@ export function SubscriptionsPage() {
           <h1 className="text-base font-semibold text-foreground">Subscriptions</h1>
           <button
             onClick={openAdd}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary text-primary-foreground"
+            disabled={!ready}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary text-primary-foreground disabled:opacity-40"
           >
             <Plus className="h-3.5 w-3.5" />
             Add
@@ -171,10 +192,11 @@ export function SubscriptionsPage() {
             <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center">
               <CreditCard className="h-6 w-6 text-muted-foreground" />
             </div>
-            <p className="text-sm text-muted-foreground">No subscriptions yet.</p>
+            <p className="text-sm text-muted-foreground">{ready ? "No subscriptions yet." : "Loading…"}</p>
             <button
               onClick={openAdd}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold mt-1 bg-primary text-primary-foreground"
+              disabled={!ready}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold mt-1 bg-primary text-primary-foreground disabled:opacity-40"
             >
               <Plus className="h-3.5 w-3.5" />
               Add your first subscription
@@ -214,7 +236,7 @@ export function SubscriptionsPage() {
                     sub.active ? "" : "opacity-45"
                   }`}
                 >
-                  <LogoAvatar name={sub.name} website={sub.website} colors={CATEGORY_COLORS[sub.category]} />
+                  <LogoAvatar id={sub.id} kind="sub" name={sub.name} colors={CATEGORY_COLORS[sub.category]} />
 
                   {/* Name + badge */}
                   <div className="flex items-center gap-2 flex-1 min-w-0">

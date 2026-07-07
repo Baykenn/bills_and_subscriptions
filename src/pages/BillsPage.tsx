@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useBaseCurrency } from "../lib/useBaseCurrency";
-import { Plus, Pencil, Trash2, Zap, ChevronDown, RefreshCw } from "lucide-react";
+import { Plus, Pencil, Trash2, Zap, ChevronDown, RefreshCw, Upload } from "lucide-react";
 import { PageLayout } from "../components/PageLayout";
 import { LogoAvatar } from "../components/LogoAvatar";
 import {
@@ -17,7 +17,13 @@ import {
   generateId,
   formatCurrency,
   advanceDateByCycle,
+  isHydrated,
+  getLogo,
+  saveLogo,
+  deleteLogo,
 } from "../lib/storage";
+import { prepareLogoUpload } from "../lib/image";
+import { getContext } from "../context";
 
 const CURRENT_PATH = "/addons/bills-and-subscriptions/bills";
 
@@ -40,6 +46,7 @@ const BLANK_FORM = {
   paid: false,
   recurring: false,
   billingCycle: "monthly" as BillingCycle,
+  logo: undefined as string | undefined,
 };
 
 type FormState = typeof BLANK_FORM;
@@ -54,8 +61,21 @@ interface BillFormProps {
 
 function BillForm({ initial, editingId, onSave, onDelete, onClose }: BillFormProps) {
   const [form, setForm] = useState<FormState>(initial);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const set = (field: keyof FormState, value: unknown) =>
     setForm((prev) => ({ ...prev, [field]: value }));
+
+  const handleLogoPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const dataUri = await prepareLogoUpload(file);
+    if (!dataUri) {
+      getContext().api.toast.error("Couldn't use that image — try a smaller or simpler one.");
+      return;
+    }
+    set("logo", dataUri);
+  };
 
   return (
     <div
@@ -67,6 +87,43 @@ function BillForm({ initial, editingId, onSave, onDelete, onClose }: BillFormPro
         <h2 className="text-sm font-semibold text-foreground">
           {editingId ? "Edit bill" : "Add bill"}
         </h2>
+
+        {/* Logo */}
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0 bg-muted flex items-center justify-center">
+            {form.logo ? (
+              <img src={form.logo} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <Upload className="h-4 w-4 text-muted-foreground" />
+            )}
+          </div>
+          <div className="flex flex-col gap-1">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="absolute w-px h-px p-0 -m-px overflow-hidden opacity-0"
+              style={{ clip: "rect(0,0,0,0)" }}
+              onChange={handleLogoPick}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="text-xs font-medium text-foreground hover:underline w-fit"
+            >
+              {form.logo ? "Change logo" : "Upload logo"}
+            </button>
+            {form.logo && (
+              <button
+                type="button"
+                onClick={() => set("logo", undefined)}
+                className="text-xs text-muted-foreground hover:text-red-400 w-fit"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        </div>
 
         {/* Name */}
         <div className="flex flex-col gap-1.5">
@@ -82,7 +139,7 @@ function BillForm({ initial, editingId, onSave, onDelete, onClose }: BillFormPro
 
         {/* Website */}
         <div className="flex flex-col gap-1.5">
-          <label className="text-xs text-muted-foreground">Website <span className="text-muted-foreground/50">(optional — for logo)</span></label>
+          <label className="text-xs text-muted-foreground">Website <span className="text-muted-foreground/50">(optional)</span></label>
           <input
             type="text"
             placeholder="e.g. edf.fr, voo.be…"
@@ -252,11 +309,19 @@ export function BillsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formInitial, setFormInitial] = useState<FormState>(() => ({ ...BLANK_FORM, currency: baseCurrency }));
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set());
+  const [ready, setReady] = useState(isHydrated);
 
   const refresh = useCallback(() => setBills(getBills()), []);
   useEffect(() => { refresh(); }, [refresh]);
 
+  useEffect(() => {
+    const onHydrated = () => { setReady(true); refresh(); };
+    window.addEventListener("ss:storage-hydrated", onHydrated);
+    return () => window.removeEventListener("ss:storage-hydrated", onHydrated);
+  }, [refresh]);
+
   const openAdd = () => {
+    if (!ready) return;
     setEditingId(null);
     setFormInitial({ ...BLANK_FORM, currency: baseCurrency, date: today() });
     setShowForm(true);
@@ -275,13 +340,16 @@ export function BillsPage() {
       paid: bill.paid,
       recurring: bill.recurring,
       billingCycle: bill.billingCycle ?? "monthly",
+      logo: getLogo("bill", bill.id) ?? undefined,
     });
     setShowForm(true);
   };
 
-  const handleSave = (form: FormState) => {
+  const handleSave = async (form: FormState) => {
+    if (!ready) return;
+    const id = editingId ?? generateId();
     saveBill({
-      id: editingId ?? generateId(),
+      id,
       name: form.name.trim(),
       amount: parseFloat(form.amount) || 0,
       currency: form.currency,
@@ -293,12 +361,18 @@ export function BillsPage() {
       recurring: form.recurring,
       billingCycle: form.recurring ? form.billingCycle : undefined,
     });
-    refresh();
     setShowForm(false);
+    if (form.logo) {
+      await saveLogo("bill", id, form.logo);
+    } else {
+      deleteLogo("bill", id);
+    }
+    refresh();
   };
 
   const handleDelete = (id: string) => {
     deleteBill(id);
+    deleteLogo("bill", id);
     refresh();
     setShowForm(false);
   };
@@ -375,7 +449,8 @@ export function BillsPage() {
           <h1 className="text-base font-semibold text-foreground">Bills</h1>
           <button
             onClick={openAdd}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary text-primary-foreground"
+            disabled={!ready}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary text-primary-foreground disabled:opacity-40"
           >
             <Plus className="h-3.5 w-3.5" />
             Add
@@ -419,10 +494,11 @@ export function BillsPage() {
             <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center">
               <Zap className="h-6 w-6 text-muted-foreground" />
             </div>
-            <p className="text-sm text-muted-foreground">No bills yet.</p>
+            <p className="text-sm text-muted-foreground">{ready ? "No bills yet." : "Loading…"}</p>
             <button
               onClick={openAdd}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold mt-1 bg-primary text-primary-foreground"
+              disabled={!ready}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold mt-1 bg-primary text-primary-foreground disabled:opacity-40"
             >
               <Plus className="h-3.5 w-3.5" />
               Add your first bill
@@ -472,7 +548,7 @@ export function BillsPage() {
                           className={`bg-card border border-border rounded-xl px-3 py-2.5 flex items-center gap-3 transition-opacity ${bill.paid ? "opacity-50" : ""}`}
                         >
                           {/* Logo / category avatar */}
-                          <LogoAvatar name={bill.name} website={bill.website} colors={colors} />
+                          <LogoAvatar id={bill.id} kind="bill" name={bill.name} colors={colors} />
 
                           {/* Name + badges + date */}
                           <div className="flex flex-col gap-0.5 flex-1 min-w-0">

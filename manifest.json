@@ -1,16 +1,22 @@
 {
   "id": "bills-and-subscriptions",
   "name": "Bills & Subscriptions",
-  "version": "1.0.0",
+  "version": "3.6.1",
   "description": "Track all your bills and subscriptions and see your monthly/yearly spend at a glance",
   "author": "Baykenn",
   "main": "dist/addon.js",
-  "sdkVersion": "3.3.0",
+  "sdkVersion": "3.6.1",
   "license": "MIT",
   "homepage": "https://github.com/Baykenn/bills-and-subscriptions",
   "repository": "https://github.com/Baykenn/bills-and-subscriptions",
   "keywords": ["bills", "subscriptions", "budget", "spending", "tracker"],
-  "minWealthfolioVersion": null,
+  "minWealthfolioVersion": "3.6.1",
+  "hostDependencies": {
+    "@wealthfolio/addon-sdk": "^3.6.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "lucide-react": "^0.561.0"
+  },
   "icon": null,
   "enabled": true,
   "permissions": [
@@ -18,9 +24,42 @@
       "category": "ui",
       "functions": [
         { "name": "sidebar.addItem", "isDeclared": true, "isDetected": false, "detectedAt": null },
-        { "name": "router.add", "isDeclared": true, "isDetected": false, "detectedAt": null }
+        { "name": "router.add", "isDeclared": true, "isDetected": false, "detectedAt": null },
+        { "name": "navigation.navigate", "isDeclared": true, "isDetected": false, "detectedAt": null },
+        { "name": "onDisable", "isDeclared": true, "isDetected": false, "detectedAt": null }
       ],
-      "purpose": "Add Bills & Subscriptions to the sidebar navigation"
+      "purpose": "Add Bills & Subscriptions to the sidebar navigation and switch between its tabs"
+    },
+    {
+      "category": "settings",
+      "functions": [
+        { "name": "get", "isDeclared": true, "isDetected": false, "detectedAt": null }
+      ],
+      "purpose": "Read the portfolio's base currency to display subscription totals consistently"
+    },
+    {
+      "category": "accounts",
+      "functions": [
+        { "name": "getAll", "isDeclared": true, "isDetected": false, "detectedAt": null }
+      ],
+      "purpose": "List accounts so Wealthfolio Sync can post subscription charges to the right one"
+    },
+    {
+      "category": "activities",
+      "functions": [
+        { "name": "create", "isDeclared": true, "isDetected": false, "detectedAt": null },
+        { "name": "getAll", "isDeclared": true, "isDetected": false, "detectedAt": null }
+      ],
+      "purpose": "Create withdrawal activities when syncing subscription charges, and check for already-synced ones to avoid duplicates"
+    },
+    {
+      "category": "secrets",
+      "functions": [
+        { "name": "get", "isDeclared": true, "isDetected": false, "detectedAt": null },
+        { "name": "set", "isDeclared": true, "isDetected": false, "detectedAt": null },
+        { "name": "delete", "isDeclared": true, "isDetected": false, "detectedAt": null }
+      ],
+      "purpose": "Store your subscriptions, bills, and settings — the sandboxed addon has no other durable storage"
     }
   ]
 }
