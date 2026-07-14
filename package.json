@@ -1,6 +1,6 @@
 {
   "name": "bills-and-subscriptions",
-  "version": "3.6.1",
+  "version": "3.6.2",
   "description": "Track all your bills and subscriptions and see your monthly/yearly spend at a glance",
   "type": "module",
   "main": "dist/addon.js",
@@ -15,7 +15,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@wealthfolio/addon-sdk": "^3.6.1"
+    "@wealthfolio/addon-sdk": "^3.6.2"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",

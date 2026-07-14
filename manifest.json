@@ -1,18 +1,18 @@
 {
   "id": "bills-and-subscriptions",
   "name": "Bills & Subscriptions",
-  "version": "3.6.1",
+  "version": "3.6.2",
   "description": "Track all your bills and subscriptions and see your monthly/yearly spend at a glance",
   "author": "Baykenn",
   "main": "dist/addon.js",
-  "sdkVersion": "3.6.1",
+  "sdkVersion": "3.6.2",
   "license": "MIT",
   "homepage": "https://github.com/Baykenn/bills-and-subscriptions",
   "repository": "https://github.com/Baykenn/bills-and-subscriptions",
   "keywords": ["bills", "subscriptions", "budget", "spending", "tracker"],
-  "minWealthfolioVersion": "3.6.1",
+  "minWealthfolioVersion": "3.6.2",
   "hostDependencies": {
-    "@wealthfolio/addon-sdk": "^3.6.1",
+    "@wealthfolio/addon-sdk": "^3.6.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "lucide-react": "^0.561.0"
@@ -56,10 +56,9 @@
       "category": "secrets",
       "functions": [
         { "name": "get", "isDeclared": true, "isDetected": false, "detectedAt": null },
-        { "name": "set", "isDeclared": true, "isDetected": false, "detectedAt": null },
         { "name": "delete", "isDeclared": true, "isDetected": false, "detectedAt": null }
       ],
-      "purpose": "Store your subscriptions, bills, and settings — the sandboxed addon has no other durable storage"
+      "purpose": "One-time migration of subscriptions, bills, and settings from the legacy secrets-backed store into durable KV storage"
     }
   ]
 }
